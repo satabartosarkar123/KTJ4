@@ -1,9 +1,10 @@
+# Author: Satabarto Sarkar
 # link : 
 https://nuntio-7cos65qvx-satabartosarkar123s-projects.vercel.app/
 
 # 📰 Nutino — The Intelligent News Dashboard
 
-**Nutino** (from *"nutinō"*, Latin: *"to nod, signal, announce"*) is a sleek and modern AI-powered news dashboard that brings real-time news, insightful summaries, and intelligent categorization together in one seamless experience. Built from the ground up using **ReactJS**, **Express**, and **Google Gemini Pro**, this application offers both frontend and backend integration for fetching, displaying, summarizing, and managing news stories — all within a clean and intuitive interface.
+**Nutino** (from *"nutinō"*, Latin: *"to nod, signal, announce"*) is a sleek and modern AI-powered news dashboard that brings real-time news, insightful summaries, and intelligent categorization together in one seamless experience. Built from the ground up using **ReactJS**, **Express**, and **Google Gemini Pro**, this application offers both frontend and backend integration for fetching, displaying, summarising, and managing news stories — all within a clean and intuitive interface.
 
 ---
 
