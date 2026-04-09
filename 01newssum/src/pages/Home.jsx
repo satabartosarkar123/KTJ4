@@ -8,26 +8,30 @@ export default function Home() {
   const [category, setCategory] = useState('general')
   const [loading, setLoading] = useState(false)
 
-  // useEffect(() => {
-  //   const fetchNews = async () => {
-  //     setLoading(true)
-  //     const data = await getNewsByCategory(category)
-  //     setArticles(data)
-  //     setLoading(false)
-  //   }
-
-  //   fetchNews()
-  // }, [category])
-
   useEffect(() => {
-  const fetchNews = async () => {
-    console.log("Fetching news for:", category)
-    const data = await getNewsByCategory(category)
-    console.log("Received articles:", data)
-    setArticles(data)
-  }
-  fetchNews()
-}, [category])
+    let intervalId;
+
+    const fetchNews = async (isBackground = false) => {
+      // Only show the loading text on the very first initial load
+      if (!isBackground) setLoading(true)
+      
+      const data = await getNewsByCategory(category)
+      setArticles(data)
+      
+      if (!isBackground) setLoading(false)
+    }
+
+    // 1. Fetch immediately on load or category change
+    fetchNews()
+
+    // 2. Continually fetch in the background every 2 minutes
+    intervalId = setInterval(() => {
+      fetchNews(true) // Pass true so it doesn't trigger the "Loading..." text
+    }, 2 * 60 * 1000)
+
+    // Cleanup interval when leaving the page or switching tabs
+    return () => clearInterval(intervalId)
+  }, [category])
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">

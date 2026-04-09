@@ -1,28 +1,30 @@
 import axios from 'axios'
 
-const GEMINI_API_KEY = AIzaSyDqes4aSHXqRP1DvGS-YOEStn9CB_biWjY
+// Backend API base URL — default to localhost to avoid Render cold starts
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5001'
 
-
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`
-
-
-
-export const summarizeArticle = async (articleText) => {
+/**
+ * Summarize an article via the backend pipeline.
+ * The backend handles: validation → Gemini API call → storage.
+ * No API key is exposed to the frontend.
+ * 
+ * @param {string} articleText - The article content to summarize
+ * @param {object} metadata - Optional metadata (title, source, date, url)
+ * @returns {object} { status, summary, processing_time } or { status, message }
+ */
+export const summarizeArticle = async (articleText, metadata = {}) => {
   try {
-    const response = await axios.post(GEMINI_URL, {
-      contents: [
-        {
-          parts: [
-            {
-              text: `Summarize the following article in 3 bullet points:\n${articleText}`
-            }
-          ]
-        }
-      ]
+    const response = await axios.post(`${API_BASE}/api/summarize`, {
+      content: articleText,
+      ...metadata,
     })
-    return response.data.candidates[0].content.parts[0].text
+    return response.data
   } catch (error) {
-    console.error("Gemini API Error:", error.response?.data || error.message)
-    return "Sorry, could not generate summary."
+    const errorData = error.response?.data
+    console.error('Summarization error:', errorData || error.message)
+    return {
+      status: 'error',
+      message: errorData?.message || 'Failed to connect to summarization service',
+    }
   }
 }

@@ -1,7 +1,6 @@
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
 import { summarizeArticle } from '../api/geminiAPI' 
-import axios from 'axios'
 
 
 export default function ArticleDetail() {
@@ -11,30 +10,32 @@ export default function ArticleDetail() {
 
   const [summary, setSummary] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
   const handleSummarize = async () => {
     setLoading(true)
+    setError('')
+    setSummary('')
+
     const fullText = article.content || article.description || article.title
-    const summaryText = await summarizeArticle(fullText)
-    setSummary(summaryText)
+
+    // Backend now handles: validate → summarize → store
+    const result = await summarizeArticle(fullText, {
+      title: article.title,
+      source: article.source.name,
+      date: new Date(article.publishedAt).toLocaleDateString(),
+      url: article.url,
+    })
+
+    if (result.status === 'success') {
+      setSummary(result.summary)
+      console.log(`✅ Summary generated in ${result.processing_time}`)
+    } else {
+      setError(result.message || 'Summarization failed')
+      console.error('❌ Summarization failed:', result.message)
+    }
+
     setLoading(false)
-
-    // Prepare summary object
-  const newSummary = {
-    title: article.title,
-    source: article.source.name,
-    date: new Date(article.publishedAt).toLocaleDateString(),
-    url: article.url,
-    summary: summaryText,
-  }
-
-  // Save to backend 
-  try {
-    await axios.post('https://newsnuggets-backend.onrender.com/api/summaries', newSummary)
-    console.log("✅ Summary saved to MongoDB")
-  } catch (err) {
-    console.error("❌ Failed to save summary:", err.message)
-  }
   }
 
   if (!article) {
@@ -74,11 +75,19 @@ export default function ArticleDetail() {
         </a>
         <button
           onClick={handleSummarize}
-          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+          disabled={loading}
+          className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
         >
           {loading ? 'Summarizing...' : 'Summarise'}
         </button>
       </div>
+
+      {error && (
+        <div className="mt-6 bg-red-50 border-l-4 border-red-500 p-4 rounded">
+          <h3 className="text-lg font-semibold mb-2 text-red-700">Error</h3>
+          <p className="text-red-800">{error}</p>
+        </div>
+      )}
 
       {summary && (
         <div className="mt-6 bg-gray-100 border-l-4 border-green-500 p-4 rounded">

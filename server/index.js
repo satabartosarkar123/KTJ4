@@ -13,8 +13,22 @@ dotenv.config()
 // Create express app
 const app = express()
 
-// Middlewares
-app.use(cors())
+// Middlewares — whitelist Vercel frontend in production
+const allowedOrigins = [
+  'http://localhost:5173',           // Vite dev
+  'http://localhost:5174',           // Vite dev (alternate port)
+  process.env.FRONTEND_URL,         // Vercel production URL (set in Render env)
+].filter(Boolean)
+
+app.use(cors({
+  origin: (origin, cb) => {
+    // Allow requests with no origin (curl, Postman, server-to-server)
+    if (!origin) return cb(null, true)
+    if (allowedOrigins.some(o => origin.startsWith(o))) return cb(null, true)
+    cb(new Error('Not allowed by CORS'))
+  },
+  credentials: true,
+}))
 app.use(express.json({ limit: '1mb' }))
 
 // Logging
