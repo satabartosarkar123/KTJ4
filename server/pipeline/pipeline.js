@@ -66,7 +66,7 @@ export async function ingestArticle(content, metadata = {}) {
   }
 }
 
-// ─── Stage 2: Summarization via Gemini ───────────────────────────────────────
+// ─── Stage 2: Summarization via Gemini & Groq ────────────────────────────────
 
 const GEMINI_MODEL = 'gemini-2.0-flash'
 const MAX_RETRIES = 1
@@ -99,6 +99,39 @@ async function callGemini(content) {
   return text
 }
 
+async function callGroq(content) {
+  const apiKey = process.env.GROQ_API_KEY
+  if (!apiKey) {
+    throw new Error('GROQ_API_KEY is not set in environment variables')
+  }
+  
+  const response = await axios.post(
+    'https://api.groq.com/openai/v1/chat/completions',
+    {
+      model: 'llama3-8b-8192',
+      messages: [
+        {
+          role: 'user',
+          content: `Summarize the following article in 3 bullet points:\n${content}`,
+        },
+      ],
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    }
+  )
+
+  const text = response.data?.choices?.[0]?.message?.content
+  if (!text) {
+    throw new Error('Groq returned empty or malformed response')
+  }
+
+  return text
+}
+
 export async function summarizeArticle(content) {
   logSummarize('Summarization started', { contentLength: content.length })
   const startTime = Date.now()
@@ -113,7 +146,7 @@ export async function summarizeArticle(content) {
       const summary = await callGemini(content)
       const processingTime = `${Date.now() - startTime}ms`
 
-      logSummarize('Summarization successful', { processingTime })
+      logSummarize('Summarization successful (via Gemini)', { processingTime })
       return {
         status: 'success',
         summary,
@@ -124,20 +157,36 @@ export async function summarizeArticle(content) {
       const errMsg = error.response?.data?.error?.message || error.message
       logError(`Gemini API failed (attempt ${attempt + 1}/${MAX_RETRIES + 1})`, { error: errMsg })
 
-      // Brief pause before retry
+      // Brief pause before retry Gemini
       if (attempt < MAX_RETRIES) {
         await new Promise((resolve) => setTimeout(resolve, 1000))
       }
     }
   }
 
-  // All retries exhausted
-  const processingTime = `${Date.now() - startTime}ms`
-  logError('Summarization failed after all retries', { processingTime })
-  return {
-    status: 'error',
-    message: 'Gemini API failed after retries: ' + (lastError?.response?.data?.error?.message || lastError?.message || 'Unknown error'),
-    processing_time: processingTime,
+  // Gemini exhausted, try Groq fallback
+  logSummarize('Gemini exhausted, attempting Groq fallback...')
+  try {
+    const summary = await callGroq(content)
+    const processingTime = `${Date.now() - startTime}ms`
+
+    logSummarize('Summarization successful (via Groq fallback)', { processingTime })
+    return {
+      status: 'success',
+      summary,
+      processing_time: processingTime,
+    }
+  } catch (groqError) {
+    logError('Groq fallback failed', { error: groqError.response?.data || groqError.message })
+    
+    // Both failed
+    const processingTime = `${Date.now() - startTime}ms`
+    logError('Summarization failed entirely', { processingTime })
+    return {
+      status: 'error',
+      message: 'Both Gemini and Groq API failed. Last error: ' + (groqError?.response?.data?.error?.message || groqError?.message || 'Unknown error'),
+      processing_time: processingTime,
+    }
   }
 }
 
