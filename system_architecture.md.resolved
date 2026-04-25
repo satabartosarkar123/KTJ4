@@ -1,0 +1,306 @@
+# Nutino System Architecture Design
+
+## 1. Context & Assumptions
+Based on the provided details, Nutino is an intelligent news dashboard utilizing ReactJS, Express, MongoDB, Google Gemini Pro, and NewsAPI. 
+
+**Assumptions made:**
+- The system focuses on read-heavy operations (news viewing) with occasional write operations (saving articles, user registration).
+- Caching is implemented on the backend to reduce calls to external APIs (NewsAPI/Gemini) due to rate limiting and cost.
+- The system will be deployed to a cloud provider (e.g., AWS, GCP) using standard containerized deployment practices.
+- Images and static assets from news articles will be served via their original sources, not mirrored on our servers.
+
+---
+
+## 2. High-Level Architecture (HLA) - C4 Level 1 Context
+
+The context diagram illustrates Nutino and its interactions with users and external systems.
+
+```mermaid
+C4Context
+    title System Context Diagram for Nutino
+
+    Person(user, "User", "A reader of the Nutino dashboard who browses and saves news.")
+    
+    System(nutino, "Nutino System", "Intelligent AI-powered news dashboard.")
+    
+    System_Ext(newsapi, "NewsAPI", "Provides real-time global news headlines and articles.")
+    System_Ext(gemini, "Google Gemini Pro API", "Provides AI-based 3-bullet point summarization.")
+    
+    Rel(user, nutino, "Views news, triggers summaries, saves articles", "HTTPS")
+    Rel(nutino, newsapi, "Fetches news feeds by category", "REST/HTTPS")
+    Rel(nutino, gemini, "Requests summaries of articles", "REST/HTTPS")
+```
+
+---
+
+## 3. Container-Level Architecture - C4 Level 2
+
+This level breaks down Nutino into its primary deployable containers.
+
+```mermaid
+C4Container
+    title Container Diagram for Nutino
+
+    Person(user, "User", "A reader.")
+
+    System_Boundary(nutino, "Nutino System") {
+        Container(web, "Web Application", "ReactJS, Tailwind CSS", "Provides the responsive single-page application interface.")
+        Container(api, "API Gateway / Backend", "Node.js, Express", "Handles business logic, authentication, and routing.")
+        ContainerDb(db, "Database", "MongoDB", "Stores user profiles, credentials, and saved articles.")
+        Container(cache, "Session/Data Cache", "Redis (Recommended) / In-Memory", "Caches NewsAPI responses and Gemini summaries to minimize external API calls.")
+    }
+
+    System_Ext(newsapi, "NewsAPI", "External news provider.")
+    System_Ext(gemini, "Gemini API", "AI summarization provider.")
+
+    Rel(user, web, "Visits and interacts with", "HTTPS")
+    Rel(web, api, "Makes API calls to", "JSON/HTTPS")
+    Rel(api, db, "Reads from and writes to", "Mongoose/TCP")
+    Rel(api, cache, "Reads/Writes cache", "TCP")
+    Rel(api, newsapi, "Fetches live news", "HTTPS/REST")
+    Rel(api, gemini, "Gets AI summaries", "HTTPS/REST")
+```
+
+**Responsibilities & Technologies:**
+- **Web Application:** Renders UI, maintains client-side routing (React Router), and manages state.
+- **API Backend:** Exposes RESTful endpoints, handles JWT generation/validation, interacts with MongoDB and external APIs.
+- **Database:** Persistent storage for user data.
+- **Cache:** Highly recommended to prevent exhausting NewsAPI limits and to ensure rapid response times for frequently viewed categories.
+
+---
+
+## 4. Component-Level Design - C4 Level 3 (API Backend)
+
+Decomposition of the Node.js / Express backend service.
+
+```mermaid
+C4Component
+    title Component Diagram for API Backend
+
+    Container_Boundary(api, "API Backend Application") {
+        Component(router, "Express Router", "Express", "Routes incoming requests to appropriate controllers.")
+        Component(authCtrl, "Auth Controller", "Node.js", "Handles registration, login, JWT signing.")
+        Component(newsCtrl, "News Controller", "Node.js", "Manages news fetching and category filtering.")
+        Component(summaryCtrl, "Summary Controller", "Node.js", "Prompts Gemini for article summaries.")
+        Component(userCtrl, "User Controller", "Node.js", "Manages saved articles and user profiles.")
+        Component(dbService, "Mongoose Models", "Mongoose", "Object Data Modeling for MongoDB.")
+        Component(cacheService, "Cache Manager", "Node.js", "Checks for existing responses before calling external APIs.")
+    }
+
+    ContainerDb(db, "MongoDB", "Database", "Data storage.")
+    System_Ext(newsapi, "NewsAPI", "News Source.")
+    System_Ext(gemini, "Gemini API", "AI Source.")
+    Container(web, "Web Application", "React", "Frontend.")
+
+    Rel(web, router, "API Requests")
+    Rel(router, authCtrl, "/api/auth/*")
+    Rel(router, newsCtrl, "/api/news/*")
+    Rel(router, summaryCtrl, "/api/summarize/*")
+    Rel(router, userCtrl, "/api/user/*")
+    
+    Rel(authCtrl, dbService, "Uses")
+    Rel(userCtrl, dbService, "Uses")
+    
+    Rel(newsCtrl, cacheService, "Checks cache")
+    Rel(summaryCtrl, cacheService, "Checks cache")
+    
+    Rel(cacheService, newsapi, "Fetches if cache miss")
+    Rel(cacheService, gemini, "Fetches if cache miss")
+    
+    Rel(dbService, db, "TCP")
+```
+
+---
+
+## 5. Low-Level Design (LLD)
+
+### Error Handling Flow
+1. **Controller Layer:** Catches exceptions using `try/catch` blocks or express `asyncHandler`.
+2. **Service Layer:** Throws custom operational errors (e.g., `NotFoundError`, `UnauthorizedError`).
+3. **Global Error Middleware:** Captures all unhandled errors, formats them into a standard JSON response (`{ success: false, error: "message", stack: ... }` in Dev), and logs them to the console/monitoring system.
+
+### Data Flow inside Services
+- `Request` -> `Global Rate Limiter` -> `Auth Middleware (if protected)` -> `Validation Middleware (Joi/Zod)` -> `Controller` -> `Service (Business Logic)` -> `External API/DB` -> `Response formatting` -> `Client`.
+
+---
+
+## 6. API Design
+
+### Authentication APIs
+- **`POST /api/auth/register`**
+  - **Body:** `{ "name": "John", "email": "j@test.com", "password": "..." }`
+  - **Response:** `{ "token": "jwt_string", "user": { "id": "...", "name": "..." } }`
+- **`POST /api/auth/login`**
+  - **Body:** `{ "email": "j@test.com", "password": "..." }`
+
+### News APIs
+- **`GET /api/news/top-headlines?category=business&page=1`**
+  - **Auth:** Optional
+  - **Response:** `{ "articles": [{ "title": "...", "url": "...", "source": "..." }] }`
+- **`POST /api/news/summarize`**
+  - **Auth:** Required (Bearer Token)
+  - **Rate Limit:** 5 requests per minute per user.
+  - **Body:** `{ "articleUrl": "https://...", "articleContent": "..." }`
+  - **Response:** `{ "summary": ["Point 1", "Point 2", "Point 3"] }`
+
+### User APIs
+- **`POST /api/user/saved-articles`**
+  - **Auth:** Required
+  - **Body:** `{ "article": { "title": "...", "url": "..." } }`
+- **`GET /api/user/saved-articles`**
+  - **Auth:** Required
+  - **Response:** `{ "savedArticles": [...] }`
+
+---
+
+## 7. Database Design
+
+```mermaid
+erDiagram
+    USERS {
+        ObjectId _id PK
+        string name
+        string email "Unique, Indexed"
+        string password_hash
+        datetime createdAt
+    }
+    SAVED_ARTICLES {
+        ObjectId _id PK
+        ObjectId user_id FK "Indexed"
+        string title
+        string url
+        string source_name
+        string image_url
+        string ai_summary "Optional"
+        datetime savedAt
+    }
+    
+    USERS ||--o{ SAVED_ARTICLES : "bookmarks"
+```
+
+**Indexing Strategy:**
+- `USERS.email`: Unique index for fast login lookups and preventing duplicates.
+- `SAVED_ARTICLES.user_id`: Index for quickly retrieving a user's dashboard of saved items.
+
+---
+
+## 8. Data Flow Diagrams (DFD)
+
+### Level 1: System Processes
+
+```mermaid
+flowchart TD
+    User([User])
+    UI[Frontend UI]
+    NewsProc[News Processing Engine]
+    AuthProc[Authentication Module]
+    SummProc[Summarization Engine]
+    DB[(MongoDB)]
+    ExtNews[NewsAPI]
+    ExtAI[Gemini API]
+
+    User -->|Views/Clicks| UI
+    UI -->|Login/Register| AuthProc
+    UI -->|Fetch Category| NewsProc
+    UI -->|Request Summary| SummProc
+    
+    AuthProc <-->|Validate/Store| DB
+    NewsProc -->|API Call| ExtNews
+    SummProc -->|Prompt| ExtAI
+    UI -->|Save Article| DB
+```
+
+---
+
+## 9. Sequence Diagrams
+
+### Use Case: AI Summarization Flow
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Frontend as Web UI
+    participant Backend as Express API
+    participant Cache as Redis/Memory
+    participant Gemini as Gemini Pro API
+
+    User->>Frontend: Clicks "Summarize"
+    Frontend->>Backend: POST /api/news/summarize { article_url }
+    
+    Backend->>Cache: Check for existing summary (Key: article_url)
+    
+    alt Cache Hit
+        Cache-->>Backend: Returns cached summary
+    else Cache Miss
+        Backend->>Gemini: POST Prompt ("Summarize this text into 3 bullets: ...")
+        Gemini-->>Backend: Returns AI Response
+        Backend->>Cache: Store summary with TTL (e.g., 24h)
+    end
+    
+    Backend-->>Frontend: JSON { summary: [...] }
+    Frontend-->>User: Renders 3 bullet points
+```
+
+---
+
+## 10. Deployment Architecture
+
+For a production-grade deployment on AWS/GCP:
+
+- **Frontend:** Compiled to static files (`npm run build`) and hosted on a CDN (Vercel, AWS CloudFront, or Netlify) for global edge caching.
+- **Backend:** Deployed via Docker containers on AWS ECS, Google Cloud Run, or a standard EC2 instance with PM2.
+- **Load Balancer:** Distributes traffic across multiple instances of the backend.
+- **Database:** Managed MongoDB service (MongoDB Atlas) for automated backups, scaling, and high availability.
+- **CI/CD:** GitHub Actions to run tests, build Docker images, and push updates seamlessly to the cloud.
+
+```mermaid
+flowchart TD
+    Client([User Browser])
+    CDN[Frontend CDN / Vercel]
+    LB[API Load Balancer]
+    
+    subgraph Backend Cluster
+        API1[Node.js Instance 1]
+        API2[Node.js Instance 2]
+    end
+    
+    DB[(MongoDB Atlas)]
+    Cache[(Redis Cache)]
+    
+    Client -->|Static Assets| CDN
+    Client -->|API Data| LB
+    LB --> API1
+    LB --> API2
+    API1 --> DB
+    API2 --> DB
+    API1 --> Cache
+    API2 --> Cache
+```
+
+---
+
+## 11. Scalability & Performance
+
+- **Caching:** Crucial for this application. Caching NewsAPI responses prevents rate limits and speeds up the "Live News Feed". Caching Gemini responses prevents redundant LLM processing costs.
+- **Horizontal Scaling:** The Node.js backend should be stateless. JWTs manage sessions, allowing the backend to scale horizontally across multiple instances behind a load balancer.
+- **Pagination:** Implement cursor-based or offset pagination on the news feed to prevent memory overload on both frontend and backend.
+- **Async Processing:** If summarization takes too long, implement WebSockets or Long Polling, though Gemini Pro usually responds fast enough for standard HTTP request-response cycles.
+
+---
+
+## 12. Security Architecture
+
+- **Authentication:** JWT (JSON Web Tokens) stored in secure, `HttpOnly` cookies (recommended) or memory to prevent XSS attacks.
+- **Authorization:** Route protection middleware ensures only logged-in users can save articles or request AI summaries.
+- **Rate Limiting:** Protect the `/api/summarize` endpoint explicitly. LLM endpoints are targets for abuse. Limit to X requests per IP/User per hour.
+- **Input Validation:** Sanitize all incoming requests (especially article URLs and Auth payloads) using a library like Joi or Zod to prevent NoSQL Injection.
+- **CORS:** Restrict Cross-Origin Resource Sharing to only the production frontend URL.
+- **Environment Secrets:** API Keys (NewsAPI, Gemini) and DB credentials must reside in `.env` files and secret managers in production, never committed to VCS.
+
+---
+
+## 13. Observability
+
+- **Logging:** Implement structured logging (e.g., using `Winston` or `Pino`). Log all API hits, errors, and external API latency.
+- **Monitoring:** Track the usage of the Gemini API and NewsAPI carefully to ensure cost control and rate-limit safety.
+- **Tracing:** Use a tool like Sentry or Datadog to capture unhandled exceptions in real-time, complete with stack traces and user context.
